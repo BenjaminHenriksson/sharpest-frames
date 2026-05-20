@@ -1,0 +1,14 @@
+# Output
+sharp_frames/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.uv/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
