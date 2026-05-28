@@ -44,16 +44,22 @@ With no positional arguments, every `*.MP4` / `*.mp4` in the current
 directory is processed. For each video the script looks for a sibling SRT
 (default `<stem>.SRT`) and pulls per-frame telemetry from it.
 
-### Output layout
+### Output
+
+Frames are written as **lossless PNG at maximum compression effort** — no
+quality flag, no JPEG escape hatch. The whole point of this tool is to
+hand frames to SfM, and lossy compression measurably degrades sub-pixel
+feature matching; even Q95 JPEG introduces enough chroma sub-sampling and
+8×8-block artifacts to hurt bundle adjustment.
 
 ```
 sharp_frames/
 ├── summary.json                          # one record per video
 └── <video-stem>/
     ├── _chunks.csv                       # per-chunk diagnostic: score, local_median, kept/rejected, reason
-    ├── <video-stem>_f{idx}_lapvar{score}.jpg   # kept frames (with EXIF)
+    ├── <video-stem>_f{idx}_lapvar{score}.png   # kept frames (with EXIF/XMP)
     └── rejected/
-        └── <video-stem>_f{idx}_lapvar{score}.jpg   # rejected frames (so you can eyeball false positives)
+        └── <video-stem>_f{idx}_lapvar{score}.png   # rejected frames (so you can eyeball false positives)
 ```
 
 ### Main options
@@ -62,7 +68,6 @@ sharp_frames/
 |---|---|---|
 | `--chunk N` | `30` | Frames per chunk (one candidate per chunk). 30 ≈ 1 s @ 30 fps. |
 | `--out DIR` | `sharp_frames` | Output root. |
-| `--quality N` | `95` | JPEG quality (1–100). 95 is photogrammetry-standard. |
 
 ### Focus-filter options
 

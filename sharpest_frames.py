@@ -97,13 +97,22 @@ class ChunkRecord:
 # ---------- Per-video processing ---------------------------------------------
 
 
+PNG_LOSSLESS_PARAMS = [
+    int(cv2.IMWRITE_PNG_COMPRESSION), 9,   # max DEFLATE effort — lossless either way, just smaller files
+    int(cv2.IMWRITE_PNG_STRATEGY), int(cv2.IMWRITE_PNG_STRATEGY_DEFAULT),
+]
+
+
 def pass1_extract(
     video_path: Path,
     work_dir: Path,
     chunk_size: int,
-    jpeg_quality: int,
 ) -> tuple[list[ChunkRecord], float]:
-    """Scan the video; write each chunk's sharpest frame as JPEG into work_dir.
+    """Scan the video; write each chunk's sharpest frame losslessly into work_dir.
+
+    Output is PNG (lossless) at maximum compression effort. Pixel data is
+    preserved exactly as decoded from the source MP4 — no lossy re-encoding
+    on top of the codec's existing compression.
 
     Returns (records, fps).  Records carry the per-chunk best score and tmp path.
     """
@@ -123,6 +132,14 @@ def pass1_extract(
     chunk_start = 0
     frame_idx = 0
 
+    def write_best():
+        name = f"{video_path.stem}_f{best_idx:0{pad}d}_lapvar{best_score:.0f}.png"
+        tmp_path = work_dir / name
+        cv2.imwrite(str(tmp_path), best_frame, PNG_LOSSLESS_PARAMS)
+        records.append(
+            ChunkRecord(chunk_start=chunk_start, best_idx=best_idx, score=best_score, tmp_path=tmp_path)
+        )
+
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -135,23 +152,13 @@ def pass1_extract(
             best_idx = frame_idx
         frame_idx += 1
         if frame_idx - chunk_start >= chunk_size and best_frame is not None:
-            name = f"{video_path.stem}_f{best_idx:0{pad}d}_lapvar{best_score:.0f}.jpg"
-            tmp_path = work_dir / name
-            cv2.imwrite(str(tmp_path), best_frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
-            records.append(
-                ChunkRecord(chunk_start=chunk_start, best_idx=best_idx, score=best_score, tmp_path=tmp_path)
-            )
+            write_best()
             chunk_start = frame_idx
             best_frame, best_score, best_idx = None, -1.0, -1
 
     # tail chunk
     if best_frame is not None:
-        name = f"{video_path.stem}_f{best_idx:0{pad}d}_lapvar{best_score:.0f}.jpg"
-        tmp_path = work_dir / name
-        cv2.imwrite(str(tmp_path), best_frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
-        records.append(
-            ChunkRecord(chunk_start=chunk_start, best_idx=best_idx, score=best_score, tmp_path=tmp_path)
-        )
+        write_best()
 
     cap.release()
     return records, fps
@@ -297,7 +304,6 @@ def process_video(
     video_path: Path,
     out_root: Path,
     chunk_size: int,
-    jpeg_quality: int,
     rel_floor: float,
     abs_floor: float,
     window_half: int,
@@ -316,7 +322,7 @@ def process_video(
     srt = parse_srt(srt_path)
     print(f"  {video_path.name}: SRT={'found ('+str(len(srt))+' frames)' if srt else 'none'}")
 
-    records, fps = pass1_extract(video_path, work_dir, chunk_size, jpeg_quality)
+    records, fps = pass1_extract(video_path, work_dir, chunk_size)
     if not records:
         return {"video": video_path.name, "n_chunks": 0}
 
@@ -402,7 +408,9 @@ def main() -> int:
     ap.add_argument("videos", nargs="*", type=Path, help="Video files (default: *.MP4 + *.mp4 in cwd)")
     ap.add_argument("--chunk", type=int, default=30, help="Frames per chunk (default 30)")
     ap.add_argument("--out", type=Path, default=Path("sharp_frames"), help="Output root dir")
-    ap.add_argument("--quality", type=int, default=95, help="JPEG quality 1–100 (default 95)")
+    # NB: output is always lossless PNG. There is no --quality / --format flag by design —
+    # this tool is meant for photogrammetry / SfM / 3DGS pipelines where lossy compression
+    # measurably hurts feature matching. If you want JPEG you're using the wrong tool.
 
     fg = ap.add_argument_group("global focus filter")
     fg.add_argument("--rel-floor", type=float, default=0.4,
@@ -448,7 +456,6 @@ def main() -> int:
             v,
             out_root=args.out,
             chunk_size=args.chunk,
-            jpeg_quality=args.quality,
             rel_floor=args.rel_floor,
             abs_floor=args.abs_floor,
             window_half=args.window_half,
