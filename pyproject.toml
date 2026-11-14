@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sharpest-frames"
+version = "0.2.0"
+description = "Sharp-frame selection with explicit static masks and synchronized multi-camera PTS"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0"]
+
+[project.optional-dependencies]
+cli = ["opencv-python-headless>=4.10"]
+metadata = ["Pillow>=10"]
+
+[project.scripts]
+sharpest-frames = "sharpest_frames:main"
+
+[tool.setuptools]
+py-modules = ["sharpest_frames", "sharpest_frames_selection", "sharpest_frames_metadata"]

@@ -19,7 +19,7 @@ Pipeline:
   Filter: rolling local-baseline check (default ±5 chunks).  A chunk is
           rejected if its best score is below `--rel-floor` × the local
           median, or below `--abs-floor`.
-  Pass 2: write surviving frames as JPEG (default Q95) and run exiftool to
+  Pass 2: write surviving frames as lossless PNG and run exiftool to
           bake in GPS + gimbal pose + DateTimeOriginal + ISO/shutter/fnum.
 
 External requirement: `exiftool` on PATH (for EXIF injection).  If absent,
@@ -63,17 +63,15 @@ SRT_RE = re.compile(
 
 def parse_srt(path: Path) -> dict[int, dict]:
     """Return {frame_idx (0-based): {tag: value_str}} for every parsable SRT block."""
-    out: dict[int, dict] = {}
     if not path.exists():
-        return out
-    text = path.read_text(errors="ignore")
-    for blk in re.split(r"\n\s*\n", text):
-        m = SRT_RE.search(blk)
-        if not m:
-            continue
-        fidx = int(m["fcnt"]) - 1  # DJI SRT is 1-indexed; OpenCV is 0-indexed
-        out[fidx] = {k: m[k] for k in m.groupdict()}
-    return out
+        return {}
+    from sharpest_frames_metadata import parse_dji_srt
+    rows = parse_dji_srt(path.read_text(encoding="utf-8-sig"))
+    aliases = {"datetime":"dt", "latitude":"lat", "longitude":"lon",
+               "rel_alt":"rel", "abs_alt":"abs", "gb_yaw":"gy",
+               "gb_pitch":"gp", "gb_roll":"gr", "focal_len":"focal"}
+    return {index:{aliases.get(key,key):str(value) for key,value in row.items()}
+            for index,row in rows.items()}
 
 
 # ---------- Sharpness ---------------------------------------------------------
@@ -247,7 +245,11 @@ def build_exif_args(meta: dict, model: str, make: str) -> list[str]:
     if "fnum" in meta:
         args.append(f"-FNumber={float(meta['fnum'])}")
     if "focal" in meta:
-        args.append(f"-FocalLength={float(meta['focal'])}")
+        # DJI's SRT value is commonly 35-mm equivalent; it must not become
+        # physical FocalLength for an unknown camera. Keep the original value.
+        args.append(f"-XMP-dc:Description=Source DJI SRT focal_len: {meta['focal']}")
+        if model and "mini" in model.lower() and "4" in model and "pro" in model.lower():
+            args.append(f"-FocalLengthIn35mmFormat={round(float(meta['focal']))}")
     if "shutter" in meta:
         s = shutter_to_seconds(meta["shutter"])
         if s is not None:
@@ -259,7 +261,8 @@ def build_exif_args(meta: dict, model: str, make: str) -> list[str]:
         args += [f"-DateTimeOriginal={main}", f"-CreateDate={main}", f"-ModifyDate={main}"]
         if sub:
             args.append(f"-SubSecTimeOriginal={sub}")
-    args += [f"-Make={make}", f"-Model={model}"]
+    if make: args.append(f"-Make={make}")
+    if model: args.append(f"-Model={model}")
     return args
 
 
