@@ -85,7 +85,7 @@ sharp_frames/
 |---|---|---|
 | `--no-exif` | off | Skip EXIF/XMP injection entirely. |
 | `--srt-suffix S` | `.SRT` | Sibling SRT filename suffix. |
-| `--camera-model M` | `M3E` | Value to bake into the EXIF `Model` tag. |
+| `--camera-model M` | omitted | Verified camera model to bake into EXIF; no model is invented. |
 | `--camera-make M` | `DJI` | Value to bake into the EXIF `Make` tag. |
 
 ### Telemetry written to each kept frame
@@ -114,3 +114,58 @@ floor is the right tool.
 - `opencv-python-headless` ≥ 4.10 — resolved by `uv run`
 - `numpy` ≥ 2.0 — resolved by `uv run`
 - `exiftool` on PATH — only needed for EXIF injection
+
+## Synchronized 360/native-lens integration
+
+The existing CLI still decodes OpenCV's default video stream; it does **not**
+extract a calibrated dual-track INSV recording by itself. A caller that owns a
+calibrated multitrack decoder can use the portable `sharpest_frames_selection`
+API instead. This API depends only on NumPy; OpenCV is an optional CLI extra.
+
+`masked_laplacian_variance(gray, static_mask)` scores only static valid pixels
+and excludes the mask's one-pixel Laplacian footprint. Run it after the caller's
+calibrated optical-rim crop, IMU alignment and carrier/person masking. Compare
+candidates at the same declared raster/scoring scale. Black mask boundaries and
+people cannot contribute to the score.
+
+Build one `SynchronizedCandidate` per shared original PTS with scores and static
+support counts for **every** physical lens, an explicit time-window ID, rational
+time base, source frame index and provenance. `select_synchronized` chooses one
+complete pair per window, ranking its weakest normalized lens score, then applies
+the original rolling-median relative focus policy to each lens. It records all
+candidate scores, selected PTS, support counts and rejection reasons. It never
+chooses lenses independently, invents an IMU/camera pose, or fills a rejected
+window with a blurry pair. The caller must separately verify temporal coverage,
+overlap and reconstructed-camera quality.
+
+Defaults are at most three candidates per window, relative floor 0.4, ±5-window
+local median and at least 1,024 static scoring pixels per lens. These are scoring
+settings, not proof of a successful photogrammetry reconstruction. Candidate
+images/encodings remain caller-owned, so a streamed decoder can keep a bounded
+window in memory and persist only actual chosen pixels and scores.
+
+Install the portable API with `pip install .`; use `pip install '.[cli]'` for the
+original standalone video CLI.
+
+A relative-only focus filter cannot detect a sustained sequence whose every
+candidate has zero/low sharpness. The consumer must inspect absolute scores,
+static texture support and temporal coverage, and set an appropriate absolute
+floor from its actual review; retained windows are not automatically “sharp.”
+
+
+## Optional per-frame telemetry API
+
+`sharpest_frames_metadata.parse_dji_srt(text)` parses each available DJI field
+independently, including Mini 4 Pro clips without gimbal angles. Frame identities
+remain zero-based source `FrameCnt` values. `matched_telemetry(rows, index, pts,
+time_base)` verifies the decoder PTS against the exact SRT interval rather than
+guessing from average FPS. Missing fields stay missing.
+
+With the `metadata` extra (Pillow), `save_png_with_telemetry` writes lossless PNG
+with EXIF date/subseconds, exposure, ISO, f-number and GPS plus namespaced XMP
+for original altitude, optional gimbal values, focal hints, colour mode and
+colour temperature. It does not invent a timezone, camera model, physical focal
+length or calibrated pose. Unknown `focal_len` remains a source hint; the CLI
+only labels it 35-mm equivalent for an explicitly specified Mini 4 Pro model.
+All metadata is embedded during the one PNG encoding before hashes are computed.
+The existing CLI's optional ExifTool path now uses the field-wise parser too.
